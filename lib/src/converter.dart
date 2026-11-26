@@ -1,41 +1,35 @@
 import 'package:html/dom.dart' as dom;
 
+import 'commonmark_rules.dart';
+import 'dom_utils.dart' as dom_utils;
 import 'node.dart';
-import 'options.dart' show updateStyleOptions;
-import 'rules.dart' show Rule;
-import 'utils.dart' as util;
+import 'rule.dart';
+import 'style_options.dart';
+import 'table_rules.dart';
 
-final Set<Rule> _appendRuleSet = <Rule>{};
-final Map<String, String> _customOptions = <String, String>{};
-
-final _leadingNewLinesRegExp = RegExp(r'^\n*');
-final _trailingNewLinesRegExp = RegExp(r'\n*$');
-
-/// Convert [input] to markdown text.
+/// Converts [input], an HTML string or a `dom.Node`, to Markdown.
 ///
-/// The [input] can be an html string or a [dom.Node](https://pub.dev/documentation/html/latest/dom/Node-class.html).
-/// The root tag which should be converted can be set with [rootTag].
-/// The image base url can be set with [imageBaseUrl].
-/// Style options can be set with [styleOptions].
+/// [rootTag] picks the element of an HTML string whose content is converted,
+/// `html` by default. [imageBaseUrl] is put in front of every image source.
 ///
-/// The default and available style options:
+/// [styleOptions] picks the Markdown syntax. Each first value is the default:
 ///
-/// | Name        | Default           | Options  |
-/// | ------------- |:-------------:| -----:|
-/// | headingStyle      | "setext" | "setext", "atx" |
-/// | hr      | "* * *" | "* * *", "- - -", "_ _ _" |
-/// | bulletListMarker      | "*" | "*", "-", "_" |
-/// | codeBlockStyle      | "indented" | "indented", "fenced" |
-/// | fence      | "\`\`\`" | "\`\`\`", "~~~" |
-/// | emDelimiter      | "_" | "_", "*" |
-/// | strongDelimiter      | "**" | "**", "__" |
-/// | linkStyle      | "inlined" | "inlined", "referenced" |
-/// | linkReferenceStyle      | "full" | "full", "collapsed", "shortcut" |
+/// | Name | Values |
+/// | --- | --- |
+/// | headingStyle | `setext`, `atx` |
+/// | hr | `* * *`, `- - -`, `_ _ _` |
+/// | bulletListMarker | `*`, `-`, `_` |
+/// | codeBlockStyle | `indented`, `fenced` |
+/// | fence | ` ``` `, `~~~` |
+/// | emDelimiter | `_`, `*` |
+/// | strongDelimiter | `**`, `__` |
+/// | linkStyle | `inlined`, `referenced` |
+/// | linkReferenceStyle | `full`, `collapsed`, `shortcut` |
 ///
-/// Elements list in [ignore] would be ingored.
+/// Elements named in [ignore] are left out together with their content.
+/// [rules] are tried before the built-in rules, so they can replace them.
 ///
-/// The [rules] parameter can be used to customize element processing.
-///
+/// Every call is independent: options and rules apply to that call only.
 String convert(
   Object input, {
   String? rootTag,
@@ -44,156 +38,193 @@ String convert(
   List<String>? ignore,
   List<Rule>? rules,
 }) {
-  if (imageBaseUrl != null && imageBaseUrl.isNotEmpty) {
-    _customOptions['imageBaseUrl'] = imageBaseUrl;
-  }
-  updateStyleOptions(styleOptions);
-  if (ignore != null && ignore.isNotEmpty) {
-    Rule.addIgnore(ignore);
-  }
-  if (rules != null && rules.isNotEmpty) {
-    Rule.addRules(rules);
-  }
-  final output = _process(Node.root(input, rootTag: rootTag));
-  return _postProcess(output);
+  final linkReferences = <String>[];
+  final converter = _Converter([
+    ...?rules,
+    if (ignore != null && ignore.isNotEmpty)
+      Rule('ignore', filters: ignore, replacement: (content, node) => ''),
+    ...commonMarkRules(
+      StyleOptions(styleOptions),
+      imageBaseUrl: imageBaseUrl,
+      linkReferences: linkReferences,
+    ),
+    ...tableRules,
+  ]);
+  return converter.convert(Node.root(input, rootTag: rootTag));
 }
 
-String _escape(String input) {
-  return input
-      .replaceAllMapped(RegExp(r'\\(\S)'),
-          (match) => '\\\\${match[1]}') // Escape backslash escapes!
-      .replaceAllMapped(RegExp(r'^(#{1,6} )', multiLine: true),
-          (match) => '\\${match[1]}') // Escape headings
-      .replaceAllMapped(RegExp(r'^([-*_] *){3,}$', multiLine: true), (match) {
-        return match[0]!.split(match[1]!).join('\\${match[1]}');
-      })
-      .replaceAllMapped(RegExp(r'^(\W* {0,3})(\d+)\. ', multiLine: true),
-          (match) => '${match[1]}${match[2]}\\. ')
-      .replaceAllMapped(RegExp(r'^([^\\\w]*)[*+-] ', multiLine: true), (match) {
-        return match[0]!
-            .replaceAllMapped(RegExp(r'([*+-])'), (match) => '\\${match[1]}');
-      })
-      .replaceAllMapped(RegExp(r'^(\W* {0,3})> '), (match) => '${match[1]}\\> ')
-      .replaceAllMapped(RegExp(r'\*+(?![*\s\W]).+?\*+'),
-          (match) => match[0]!.replaceAll(RegExp(r'\*'), '\\*'))
-      .replaceAllMapped(RegExp(r'_+(?![_\s\W]).+?_+'),
-          (match) => match[0]!.replaceAll(RegExp(r'_'), '\\_'))
-      .replaceAllMapped(RegExp(r'`+(?![`\s\W]).+?`+'),
-          (match) => match[0]!.replaceAll(RegExp(r'`'), '\\`'))
-      .replaceAllMapped(RegExp(r'[\[\]]'), (match) => '\\${match[0]}');
-}
+final _leadingNewlines = RegExp(r'^\n*');
+final _trailingNewlines = RegExp(r'\n*$');
+final _leadingLineBreaks = RegExp(r'^[\t\r\n]+');
+final _trailingWhitespace = RegExp(r'[\t\r\n\s]+$');
+final _edgeWhitespace = RegExp(
+  r'^(([ \t\r\n]*)(\s*))(?:(?=\S)[\s\S]*\S)?((\s*?)([ \t\r\n]*))$',
+);
 
-Map<String, String> _getFlankingWhitespace(Node node) {
-  var result = <String, String>{};
-  if (!node.isBlock) {
-    var hasLeading = RegExp(r'^[ \r\n\t]').hasMatch(node.textContent);
-    var hasTrailing = RegExp(r'[ \r\n\t]$').hasMatch(node.textContent);
-
-    if (hasLeading && !_isFlankedByWhitespace(node, 'left')) {
-      result['leading'] = ' ';
+final _defaultRule = Rule(
+  'default',
+  replacement: (content, node) {
+    if (!node.isBlock) {
+      return content;
     }
-    if (hasTrailing && !_isFlankedByWhitespace(node, 'right')) {
-      result['trailing'] = ' ';
+    return content.isEmpty ? '\n\n' : '\n\n$content\n\n';
+  },
+);
+
+class _Converter {
+  _Converter(this._rules);
+
+  final List<Rule> _rules;
+  final _appendingRules = <Rule>{};
+
+  String convert(Node root) {
+    var output = _convertChildren(root);
+    for (final rule in _appendingRules) {
+      output = _join(output, rule.append!());
     }
-  }
-  return result;
-}
-
-bool _isFlankedByWhitespace(Node node, String side) {
-  dom.Node? sibling;
-  RegExp regExp;
-  var isFlanked = false;
-
-  if (side == 'left') {
-    sibling = util.previousSibling(node.node);
-    regExp = RegExp(r' $');
-  } else {
-    sibling = util.nextSibling(node.node);
-    regExp = RegExp(r'^ ');
+    return output
+        .replaceAll(_leadingLineBreaks, '')
+        .replaceAll(_trailingWhitespace, '');
   }
 
-  if (sibling != null) {
-    if (sibling.nodeType is dom.Text) {
-      isFlanked = regExp.hasMatch((sibling as dom.Text).text);
-    } else if (sibling is dom.Element && !util.isBlock(sibling)) {
-      isFlanked = regExp.hasMatch(sibling.innerHtml);
+  String _convertChildren(Node parent) {
+    var output = '';
+    for (final node in parent.childNodes()) {
+      final replacement = switch (node.node) {
+        dom.Text(:final data) => node.isCode ? data : _escape(data),
+        dom.Element() => _convertElement(node),
+        _ => '',
+      };
+      output = _join(
+          _separateExclamationFromBracket(output, replacement), replacement);
     }
+    return output;
   }
-  return isFlanked;
-}
 
-String _join(String string1, String string2) {
-  var separator = _separatingNewlines(string1, string2);
-  // Remove trailing/leading newlines and replace with separator
-  string1 = string1.replaceAll(_trailingNewLinesRegExp, '');
-  string2 = string2.replaceAll(_leadingNewLinesRegExp, '');
-  return '$string1$separator$string2';
-}
-
-String _postProcess(String input) {
-  _appendRuleSet.forEach((rule) {
-    input = _join(input, rule.append!());
-  });
-
-  if (input.isNotEmpty) {
-    return input
-        .replaceAll(RegExp(r'^[\t\r\n]+'), '')
-        .replaceAll(RegExp(r'[\t\r\n\s]+$'), '');
-  }
-  return '';
-}
-
-String _process(Node inNode) {
-  var result = '';
-  for (var node in inNode.childNodes()) {
-    var replacement = '';
-    if (node.nodeType == 3) {
-      // Text
-      var textContent = node.textContent;
-      replacement = node.isCode ? textContent : _escape(textContent);
-    } else if (node.nodeType == 1) {
-      // Element
-      replacement = _replacementForNode(node);
+  String _convertElement(Node node) {
+    final rule = _rules.firstWhere(
+      (rule) => rule.matches(node),
+      orElse: () => _defaultRule,
+    );
+    if (rule.append != null) {
+      _appendingRules.add(rule);
     }
-    result = _join(result, replacement);
-  }
-  return result;
-}
 
-String _replacementForNode(Node node) {
-  var rule = Rule.findRule(node);
-  if (rule.append != null) {
-    _appendRuleSet.add(rule);
-  }
-  var content = _process(node);
-  var whitespace = _getFlankingWhitespace(node);
-  if (whitespace['leading'] != null || whitespace['trailing'] != null) {
-    content = content.trim();
-  }
-  var replacement = rule.replacement!(content, node);
-  if (rule.name == 'image') {
-    var imageSrc = node.getAttribute('src');
-    var imageBaseUrl = _customOptions['imageBaseUrl'];
-    if (imageSrc != null && imageBaseUrl != null) {
-      String newSrc;
-      if (imageBaseUrl.endsWith('/') || imageSrc.startsWith('/')) {
-        newSrc = imageBaseUrl + imageSrc;
-      } else {
-        newSrc = imageBaseUrl + '/' + imageSrc;
-      }
-      replacement = replacement.replaceAll(RegExp(imageSrc), newSrc);
+    var content = _convertChildren(node);
+    final (:leading, :trailing) = _flankingWhitespace(node);
+    if (leading.isNotEmpty || trailing.isNotEmpty) {
+      content = content.trim();
     }
+    final replacement = rule.replacement?.call(content, node) ?? content;
+    return '$leading$replacement$trailing';
   }
-  return '${whitespace['leading'] ?? ''}$replacement${whitespace['trailing'] ?? ''}';
+
+  /// Whitespace at the edges of an inline element moves outside of it, so
+  /// that `<b>bold&nbsp;</b>` becomes `**bold**&nbsp;` instead of
+  /// `**bold&nbsp;**`, which is not bold in Markdown. A space is dropped when
+  /// the neighboring text already provides one.
+  ({String leading, String trailing}) _flankingWhitespace(Node node) {
+    if (node.isBlock) {
+      return (leading: '', trailing: '');
+    }
+    final edges = _edgeWhitespace.firstMatch(node.textContent)!;
+    final [
+      leading,
+      leadingAscii,
+      leadingNonAscii
+    ] = [edges[1]!, edges[2]!, edges[3]!];
+    final [
+      trailing,
+      trailingNonAscii,
+      trailingAscii
+    ] = [edges[4]!, edges[5]!, edges[6]!];
+    return (
+      leading:
+          leadingAscii.isNotEmpty && _isFlankedByWhitespace(node, onLeft: true)
+              ? leadingNonAscii
+              : leading,
+      trailing: trailingAscii.isNotEmpty &&
+              _isFlankedByWhitespace(node, onLeft: false)
+          ? trailingNonAscii
+          : trailing,
+    );
+  }
 }
 
-String _separatingNewlines(String output, String replacement) {
-  var newlines = [
-    _trailingNewLinesRegExp.stringMatch(output),
-    _leadingNewLinesRegExp.stringMatch(replacement),
-  ];
-  newlines.sort((a, b) => a!.compareTo(b!));
-
-  var maxNewlines = newlines.last!;
-  return maxNewlines.length < 2 ? maxNewlines : '\n\n';
+bool _isFlankedByWhitespace(Node node, {required bool onLeft}) {
+  final sibling = onLeft
+      ? dom_utils.previousSibling(node.node)
+      : dom_utils.nextSibling(node.node);
+  final siblingText = switch (sibling) {
+    dom.Text(:final data) => data,
+    final dom.Element element when !dom_utils.isBlock(element) =>
+      element.innerHtml,
+    _ => null,
+  };
+  if (siblingText == null) {
+    return false;
+  }
+  return onLeft ? siblingText.endsWith(' ') : siblingText.startsWith(' ');
 }
+
+/// A `!` right before a link or an image would turn the link into an image,
+/// or confuse some parsers, so it is escaped.
+String _separateExclamationFromBracket(String output, String replacement) {
+  final isBeforeBracket =
+      replacement.startsWith('[') || replacement.startsWith('![');
+  if (isBeforeBracket && output.endsWith('!') && !output.endsWith(r'\!')) {
+    return '${output.substring(0, output.length - 1)}\\!';
+  }
+  return output;
+}
+
+String _join(String first, String second) {
+  final trailing = _trailingNewlines.stringMatch(first)!;
+  final leading = _leadingNewlines.stringMatch(second)!;
+  final mostNewlines = trailing.length > leading.length ? trailing : leading;
+  final separator = mostNewlines.length < 2 ? mostNewlines : '\n\n';
+  return '${first.replaceAll(_trailingNewlines, '')}$separator'
+      '${second.replaceAll(_leadingNewlines, '')}';
+}
+
+/// Text inside a URL, such as `https://example.com/a_b_c`, is not escaped.
+const _notInUrl = r'(?<!(?:https?://|mailto:|tel:)\S*)';
+
+final _escapes = <(RegExp, String Function(Match))>[
+  (RegExp(r'\\(\S)'), (match) => '\\\\${match[1]}'),
+  (RegExp(r'^(#{1,6} )', multiLine: true), (match) => '\\${match[1]}'),
+  (
+    RegExp(r'^([-*_] *){3,}$', multiLine: true),
+    (match) => match[0]!.split(match[1]!).join('\\${match[1]}'),
+  ),
+  (
+    RegExp(r'^(\W* {0,3})(\d+)\. ', multiLine: true),
+    (match) => '${match[1]}${match[2]}\\. ',
+  ),
+  (
+    RegExp(r'^([^\\\w]*)[*+-] ', multiLine: true),
+    (match) => match[0]!.replaceAllMapped(
+          RegExp('([*+-])'),
+          (symbol) => '\\${symbol[1]}',
+        ),
+  ),
+  (RegExp(r'^(\W* {0,3})> '), (match) => '${match[1]}\\> '),
+  (
+    RegExp('$_notInUrl\\*+(?![*\\s\\W]).+?\\*+'),
+    (match) => match[0]!.replaceAll('*', r'\*'),
+  ),
+  (
+    RegExp('${_notInUrl}_+(?![_\\s\\W]).+?_+'),
+    (match) => match[0]!.replaceAll('_', r'\_'),
+  ),
+  (
+    RegExp('$_notInUrl`+(?![`\\s\\W]).+?`+'),
+    (match) => match[0]!.replaceAll('`', r'\`'),
+  ),
+  (RegExp('$_notInUrl[\\[\\]]'), (match) => '\\${match[0]}'),
+];
+
+String _escape(String text) => _escapes.fold(
+      text,
+      (escaped, escape) => escaped.replaceAllMapped(escape.$1, escape.$2),
+    );

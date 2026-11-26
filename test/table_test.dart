@@ -1,4 +1,4 @@
-import 'package:html2md/html2md.dart' as html2md;
+import 'package:html2md_plus/html2md_plus.dart' as html2md;
 import 'package:test/test.dart';
 
 void main() {
@@ -528,7 +528,8 @@ void main() {
     <td>Last Content</td>
   </tr>
 </table>''';
-      final expected = '''| Heading 1 | Heading 2 | Heading 3 | Heading 4 | Heading 5 | Heading 6-7 |  | Heading 8 | Heading 9 | Heading 10 | Last Heading |
+      final expected =
+          '''| Heading 1 | Heading 2 | Heading 3 | Heading 4 | Heading 5 | Heading 6-7 |  | Heading 8 | Heading 9 | Heading 10 | Last Heading |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Content 1 | Content 2 | Content 3 | Content 4 | Content 5 | Content 6-7 |  | Content 8 | Content 9 | Content 10 | Last Content |
 | Content 1 | Content 2 | Content 3 | Content 4 | Content 5 | Content 6 | Content 7 | Content 8 | Content 9 | Content 10 | Last Content |''';

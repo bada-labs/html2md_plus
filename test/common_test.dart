@@ -1,4 +1,4 @@
-import 'package:html2md/html2md.dart' as html2md;
+import 'package:html2md_plus/html2md_plus.dart' as html2md;
 import 'package:test/test.dart';
 import 'package:html/parser.dart' as parser;
 
@@ -29,7 +29,7 @@ void main() {
 
 <h2>Usage</h2>
 
-<pre><code class="language-dart">import 'package:html2md/html2md.dart' as html2md;
+<pre><code class="language-dart">import 'package:html2md_plus/html2md_plus.dart' as html2md;
 void main() {
   print(html2md.convert('&lt;h1&gt;Hello world&lt;/h1&gt;'));
 }</code></pre>
@@ -52,7 +52,8 @@ void main() {
 <pre>defaultConfig{<br>...<br>minSdkVersion 15<br>...<br>}</pre>
 ''';
       codeblockHtml = '''<pre><code>print('Hello, world');</code></pre>''';
-      multiCodeblockHtml = '''<pre><code>print('Hello, world');</code><code>print('你好, 世界');</code></pre>''';
+      multiCodeblockHtml =
+          '''<pre><code>print('Hello, world');</code><code>print('你好, 世界');</code></pre>''';
       linkWithTitleHtml =
           '<a href="https://example.com" title="Example title">Example content</a>';
       strikeHtml =
@@ -68,7 +69,7 @@ This demonstrates [html2md](https://github.com/jarontai/html2md) – an HTML to 
 Usage
 -----
 
-    import 'package:html2md/html2md.dart' as html2md;
+    import 'package:html2md_plus/html2md_plus.dart' as html2md;
     void main() {
       print(html2md.convert('<h1>Hello world</h1>'));
     }

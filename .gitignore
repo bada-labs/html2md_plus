@@ -11,3 +11,6 @@ doc/api/
 .vscode/
 
 .dart_tool/
+.idea/
+.fvm/
+.fvmrc

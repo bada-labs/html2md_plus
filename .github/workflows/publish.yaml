@@ -1,0 +1,12 @@
+# Publishes to pub.dev when a version tag such as v2.0.1 is pushed.
+# Requires automated publishing to be enabled for this repository on pub.dev.
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+jobs:
+  publish:
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

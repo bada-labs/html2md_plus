@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.0.0
+
+First release as `html2md_plus`, the maintained successor of `html2md` 1.3.2.
+
+- Every `convert` call is independent. Before, `styleOptions`, `imageBaseUrl`,
+  `ignore` and `rules` stayed in effect for later calls, and each `ignore`
+  added another rule that was never removed.
+- A converted `dom.Node` is copied first and left unchanged.
+- `script`, `style` and `template` are removed with their content, like
+  `noscript`. Their text was printed as Markdown before.
+- Whitespace at the edges of inline elements moves outside as it is, so
+  `<strong>Text&nbsp;</strong>` becomes `**Text**&nbsp;` (jarontai/html2md#50).
+  Spaces are no longer doubled next to text that already has one.
+- A `!` right before a link or an image is escaped, so `Wow!<a>` no longer
+  turns the link into an image (jarontai/html2md#54).
+- Text inside URLs and inside inline code is not escaped
+  (jarontai/html2md#51).
+- Fenced code blocks read the language from the `code` element and keep the
+  text of every highlighted span. Indented code blocks indent every line.
+- `imageBaseUrl` works with sources that contain `+`, `(` or other regular
+  expression characters.
+- `Rule.addIgnore`, `Rule.addRules` and `Rule.findRule` are removed; pass
+  `ignore` and `rules` to `convert`. `Rule.matches` tells whether a rule
+  handles a node.
+- Requires Dart 3.6. Depends on `html` only.
+
 ## 1.3.2
 - Fix compiling warning (https://github.com/jarontai/html2md/issues/41)
 
